@@ -2,6 +2,9 @@
 #include <gst/gst.h>
 #include <gst/app/app.h>
 #include <gst/app/gstappsink.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 static UINT64 presentationTsIncrement = 0;
 static BOOL eos = FALSE;
@@ -23,21 +26,21 @@ VOID onGstVideoFrameReady(UINT64 customData, PFrame pFrame)
         buffer = gst_buffer_new_allocate(NULL, pFrame->size, NULL);
         CHK_ERR(buffer != NULL, STATUS_NULL_ARG, "Buffer allocation failed");
 
-        DLOGV("Video frame size: %d, presentationTs: %llu", pFrame->size, presentationTsIncrement);
+        DLOGI("Video frame size: %d, presentationTs: %llu", pFrame->size, presentationTsIncrement);
 
-        GST_BUFFER_DTS(buffer) = presentationTsIncrement;
+/*         GST_BUFFER_DTS(buffer) = presentationTsIncrement;
         GST_BUFFER_PTS(buffer) = presentationTsIncrement;
         GST_BUFFER_DURATION(buffer) = gst_util_uint64_scale(1, GST_SECOND, DEFAULT_FPS_VALUE);
         presentationTsIncrement += gst_util_uint64_scale(1, GST_SECOND, DEFAULT_FPS_VALUE);
-
+ */
         if (gst_buffer_fill(buffer, 0, pFrame->frameData, pFrame->size) != pFrame->size) {
-            DLOGE("Buffer fill did not complete correctly");
+            DLOGI("Buffer fill did not complete correctly");
             gst_buffer_unref(buffer);
             return;
         }
         g_signal_emit_by_name(appsrcVideo, "push-buffer", buffer, &ret);
         if (ret != GST_FLOW_OK) {
-            DLOGE("Error pushing buffer: %s", gst_flow_get_name(ret));
+            DLOGI("Error pushing buffer: %s", gst_flow_get_name(ret));
         }
         gst_buffer_unref(buffer);
     }
@@ -122,7 +125,7 @@ PVOID receiveGstreamerAudioVideo(PVOID args)
     // change caps and properties dynamically, more complex logic may be needed to support the same.
     switch (pSampleStreamingSession->pVideoRtcRtpTransceiver->receiver.track.codec) {
         case RTC_CODEC_H264_PROFILE_42E01F_LEVEL_ASYMMETRY_ALLOWED_PACKETIZATION_MODE:
-            videoDescription = "appsrc name=appsrc-video ! queue ! h264parse ! queue ! matroskamux name=mux ! queue ! filesink location=video.mkv";
+            videoDescription = "appsrc name=appsrc-video ! decodebin  ! videoconvert ! autovideosink";
             videocaps = gst_caps_new_simple("video/x-h264", "stream-format", G_TYPE_STRING, "byte-stream", "alignment", G_TYPE_STRING, "au",
                                             "profile", G_TYPE_STRING, "baseline", "height", G_TYPE_INT, DEFAULT_VIDEO_HEIGHT_PIXELS, "width",
                                             G_TYPE_INT, DEFAULT_VIDEO_WIDTH_PIXELS, NULL);
@@ -229,3 +232,81 @@ CleanUp:
 
     return (PVOID) (ULONG_PTR) retStatus;
 }
+
+static const char base64_table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789+/";
+	
+static const int mod_table[] = {0, 2, 1};
+
+char *base64_encode(const unsigned char *data, size_t input_length, size_t *output_length) {
+    size_t encoded_size = 4 * ((input_length + 2) / 3);
+    char *encoded_data = malloc(encoded_size + 1);
+    if (encoded_data == NULL) return NULL;
+
+    for (size_t i = 0, j = 0; i < input_length;) {
+        uint32_t octet_a = i < input_length ? (unsigned char)data[i++] : 0;
+        uint32_t octet_b = i < input_length ? (unsigned char)data[i++] : 0;
+        uint32_t octet_c = i < input_length ? (unsigned char)data[i++] : 0;
+        uint32_t triple = (octet_a << 0x10) + (octet_b << 0x08) + octet_c;
+
+        encoded_data[j++] = base64_table[(triple >> 3 * 6) & 0x3F];
+        encoded_data[j++] = base64_table[(triple >> 2 * 6) & 0x3F];
+        encoded_data[j++] = base64_table[(triple >> 1 * 6) & 0x3F];
+        encoded_data[j++] = base64_table[(triple >> 0 * 6) & 0x3F];
+    }
+
+    for (size_t i = 0; i < mod_table[input_length % 3]; ++i)
+        encoded_data[encoded_size - 1 - i] = '=';
+
+    encoded_data[encoded_size] = '\0';
+    *output_length = encoded_size;
+    return encoded_data;
+}
+
+            
+VOID onGstVideoFrameReady2(UINT64 customData, PFrame pFrame)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    CHK_ERR(pFrame != NULL, STATUS_NULL_ARG, "Video frame is null");
+	size_t output_length;
+    char *encoded_frame = base64_encode((const unsigned char *)pFrame->frameData, pFrame->size, &output_length);
+    if (encoded_frame && !eos) {
+/* 		printf("Received frame with size: %d\n", pFrame->size);
+		for (int i = 0; i < pFrame->size; i++) {
+			printf("%02x ", pFrame->frameData[i]);
+		}
+		printf("\n"); */
+        printf("Received frame:%s\n",encoded_frame);
+		fflush(stdout);
+        free(encoded_frame);
+    } else {
+        fprintf(stderr, "Failed to encode frame to Base64\n");
+    }
+
+CleanUp:
+    return;
+}
+
+PVOID receiveGstreamerAudioVideo2(PVOID args)
+{
+    STATUS retStatus = STATUS_SUCCESS;
+    PSampleStreamingSession pSampleStreamingSession = (PSampleStreamingSession) args;
+    PSampleConfiguration pSampleConfiguration = pSampleStreamingSession->pSampleConfiguration;
+    PCHAR roleType = "Viewer";
+
+    if (pSampleConfiguration->channelInfo.channelRoleType == SIGNALING_CHANNEL_ROLE_TYPE_MASTER) {
+        roleType = "Master";
+    }
+
+    CHK_ERR(pSampleStreamingSession != NULL, STATUS_NULL_ARG, "[KVS Gstreamer %s] Sample streaming session is NULL", roleType);
+
+
+
+    CHK_STATUS(transceiverOnFrame(pSampleStreamingSession->pVideoRtcRtpTransceiver, (UINT64) pSampleStreamingSession, onGstVideoFrameReady2));
+
+CleanUp:
+    return;
+}
+

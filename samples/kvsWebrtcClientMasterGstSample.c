@@ -189,9 +189,9 @@ PVOID sendGstreamerAudioVideo(PVOID args)
                 case TEST_SOURCE: {
                     if (pSampleConfiguration->videoCodec == RTC_CODEC_H265) {
                         senderPipeline = gst_parse_launch("videotestsrc pattern=ball is-live=TRUE ! timeoverlay ! queue ! videoconvert ! "
-                                                          "video/x-raw,width=1280,height=720,framerate=25/1 ! queue ! "
+                                                          "video/x-raw,width=1280,height=640,framerate=5/1 ! queue ! "
                                                           "x265enc speed-preset=veryfast bitrate=512 tune=zerolatency ! "
-                                                          "video/x-h265,stream-format=byte-stream,alignment=au,profile=main ! appsink sync=TRUE "
+                                                          "video/x-h265,alignment=au,profile=main ! appsink sync=TRUE "
                                                           "emit-signals=TRUE name=appsink-video",
                                                           &error);
                     } else {
@@ -199,7 +199,7 @@ PVOID sendGstreamerAudioVideo(PVOID args)
                             "videotestsrc pattern=ball is-live=TRUE ! "
                             "queue ! videoconvert ! videoscale ! video/x-raw,width=1280,height=720 ! "
                             "clockoverlay halignment=right valignment=top time-format=\"%Y-%m-%d %H:%M:%S\" ! "
-                            "videorate ! video/x-raw,framerate=25/1 ! "
+                            "videorate ! video/x-raw,framerate=15/1 ! "
                             "x264enc name=sampleVideoEncoder bframes=0 speed-preset=veryfast bitrate=512 byte-stream=TRUE tune=zerolatency ! "
                             "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! "
                             "appsink sync=TRUE emit-signals=TRUE name=appsink-video",
@@ -209,7 +209,7 @@ PVOID sendGstreamerAudioVideo(PVOID args)
                 }
                 case DEVICE_SOURCE: {
                     senderPipeline = gst_parse_launch(
-                        "autovideosrc ! queue ! videoconvert ! video/x-raw,width=1280,height=720,framerate=25/1 ! "
+                        "autovideosrc ! queue ! videoconvert ! videoscale ! videorate ! video/x-raw,width=1280,height=720,framerate=20/1 ! "
                         "x264enc name=sampleVideoEncoder bframes=0 speed-preset=veryfast bitrate=512 byte-stream=TRUE tune=zerolatency ! "
                         "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! "
                         " appsink sync=TRUE "
@@ -220,11 +220,10 @@ PVOID sendGstreamerAudioVideo(PVOID args)
                 case RTSP_SOURCE: {
                     UINT16 stringOutcome =
                         SNPRINTF(rtspPipeLineBuffer, RTSP_PIPELINE_MAX_CHAR_COUNT,
-                                 "uridecodebin uri=%s ! "
-                                 "videoconvert ! "
-                                 "x264enc name=sampleVideoEncoder bframes=0 speed-preset=veryfast bitrate=512 byte-stream=TRUE tune=zerolatency ! "
-                                 "video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! queue ! "
-                                 "appsink sync=TRUE emit-signals=TRUE name=appsink-video ",
+									"rtspsrc location=%s latency=100 protocols=tcp ! "
+									"queue ! rtph264depay ! "
+									"video/x-h264,stream-format=byte-stream,alignment=au,profile=baseline ! "
+									"appsink sync=TRUE emit-signals=TRUE name=appsink-video",
                                  pSampleConfiguration->rtspUri);
 
                     if (stringOutcome > RTSP_PIPELINE_MAX_CHAR_COUNT) {
